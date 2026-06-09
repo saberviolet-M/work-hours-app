@@ -36,6 +36,7 @@ interface AppState {
   records: WorkRecord[];
   tagMappings: TagMapping[];
   settings: Settings;
+  exportConfig: ExportConfig;
   isLoading: boolean;
   error: string | null;
 
@@ -50,6 +51,9 @@ interface AppState {
   loadSettings: () => Promise<void>;
   saveSettings: (settings: Settings) => Promise<void>;
 
+  loadExportConfig: () => Promise<void>;
+  saveExportConfig: (config: Partial<ExportConfig>) => Promise<void>;
+
   importLakeFile: (content: string, useAI: boolean) => Promise<WorkRecord[]>;
 }
 
@@ -60,6 +64,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     api_key: '',
     default_attendance_days: 22,
     hours_per_day: 7.5,
+  },
+  exportConfig: {
+    id: '',
+    month: '',
+    attendance_days: 22,
+    allocation_result: '',
   },
   isLoading: false,
   error: null,
@@ -135,6 +145,24 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       await invoke('save_settings', { settings });
       set({ settings });
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  loadExportConfig: async () => {
+    try {
+      const config = await invoke<ExportConfig>('get_export_config');
+      set({ exportConfig: config });
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  saveExportConfig: async (config: Partial<ExportConfig>) => {
+    try {
+      await invoke('save_export_config', { config });
+      set((state) => ({ exportConfig: { ...state.exportConfig, ...config } }));
     } catch (e) {
       set({ error: String(e) });
     }

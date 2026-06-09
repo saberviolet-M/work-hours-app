@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useAppStore, WorkRecord } from '../store/useAppStore';
-import { parseLakeFile, hoursToNumber } from '../utils/lakeParser';
+import { parseLakeFile, parseXlsxFile, hoursToNumber } from '../utils/lakeParser';
 
 export function ImportPanel() {
   const [previewRecords, setPreviewRecords] = useState<WorkRecord[]>([]);
@@ -10,11 +10,18 @@ export function ImportPanel() {
 
   const handleFile = useCallback(
     async (file: File) => {
-      const content = await file.text();
-
       try {
-        // 先解析看能不能显示预览
-        const parsed = parseLakeFile(content);
+        let parsed;
+        if (file.name.endsWith('.xlsx')) {
+          // 解析 xlsx 文件
+          const content = await file.arrayBuffer();
+          parsed = await parseXlsxFile(content);
+        } else {
+          // 解析 .lake 文件
+          const content = await file.text();
+          parsed = parseLakeFile(content);
+        }
+
         const simpleRecords: WorkRecord[] = parsed.records.map((r, i) => ({
           id: `temp-${i}`,
           date: r.date,

@@ -273,6 +273,54 @@ fn save_settings(state: State<AppState>, settings: Settings) -> Result<(), Strin
 }
 
 #[tauri::command]
+fn get_export_config(state: State<AppState>) -> Result<ExportConfig, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+
+    let result: Option<(String, String, i32, String)> = conn.query_row(
+        "SELECT id, month, attendance_days, allocation_result FROM export_config LIMIT 1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    ).ok();
+
+    if let Some((id, month, attendance_days, allocation_result)) = result {
+        Ok(ExportConfig {
+            id,
+            month,
+            attendance_days,
+            allocation_result,
+        })
+    } else {
+        Ok(ExportConfig {
+            id: Uuid::new_v4().to_string(),
+            month: "".to_string(),
+            attendance_days: 22,
+            allocation_result: "".to_string(),
+        })
+    }
+}
+
+#[tauri::command]
+fn save_export_config(state: State<AppState>, config: serde_json::Value) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+
+    let id = if let Some(id_str) = config["id"].as_str() {
+        id_str.to_string()
+    } else {
+        Uuid::new_v4().to_string()
+    };
+    let month = config["month"].as_str().unwrap_or("");
+    let attendance_days = config["attendance_days"].as_i64().unwrap_or(22) as i32;
+    let allocation_result = config["allocation_result"].as_str().unwrap_or("");
+
+    conn.execute(
+        "INSERT OR REPLACE INTO export_config (id, month, attendance_days, allocation_result) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![id, month, attendance_days, allocation_result],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
 async fn import_lake_file(content: String, use_ai: bool, api_key: String) -> Result<Vec<WorkRecord>, String> {
     let records = parse_lake_content(&content)?;
 
@@ -280,7 +328,93 @@ async fn import_lake_file(content: String, use_ai: bool, api_key: String) -> Res
         return Ok(records);
     }
 
-    Ok(records)
+    // 调用 Claude API 进行 AI 清洗
+    let cleaned_records = call_claude_api(&api_key, &records).await?;
+    Ok(cleaned_records)
+}
+
+async fn call_claude_api(api_key: &str, records: &[WorkRecord]) -> Result<Vec<WorkRecord>, String> {
+    let client = reqwest::Client::new();
+
+    // 构建提示词
+    let records_json = serde_json::to_string_pretty(records).map_err(|e| e.to_string())?;
+    let prompt = format!(
+        r#"请清洗以下工时记录数据：
+1. 合并同一需求的不同描述记录
+2. 过滤掉状态为"测试"、"上线"、"联调"等的记录
+3. 修正明显的数据错误
+4. 返回 JSON 数组，每条记录包含：date, requirement_name, hours, project, raw_tags
+
+原始数据：
+{}"#,
+        records_json
+    );
+
+    let request_body = serde_json::json!({
+        "model": "claude-3-sonnet-20240229",
+        "max_tokens": 4096,
+        "messages": [{
+            "role": "user",
+            "content": prompt
+        }]
+    });
+
+    let response = client
+        .post("https://api.anthropic.com/v1/messages")
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
+        .json(&request_body)
+        .send()
+        .await
+        .map_err(|e| format!("API 请求失败: {}", e))?;
+
+    let response_body: serde_json::Value = response.json().await.map_err(|e| format!("解析响应失败: {}", e))?;
+
+    // 从响应中提取 AI 的回复内容
+    let ai_content = response_body["content"]
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|obj| obj.get("text"))
+        .and_then(|t| t.as_str())
+        .ok_or("无法解析 AI 响应内容")?;
+
+    // 尝试解析 AI 返回的 JSON
+    let cleaned: Vec<serde_json::Value> = match serde_json::from_str(ai_content) {
+        Ok(v) => v,
+        Err(_) => {
+            // 如果直接解析失败，尝试提取 JSON 部分
+            let start = ai_content.find('[').or_else(|| ai_content.find('{'));
+            let end = ai_content.rfind(']').or_else(|| ai_content.rfind('}'));
+            match (start, end) {
+                (Some(s), Some(e)) => serde_json::from_str(&ai_content[s..=e])
+                    .map_err(|e| format!("提取的 JSON 解析失败: {}", e))?,
+                _ => return Err("无法从 AI 响应中提取 JSON 数据".to_string()),
+            }
+        }
+    };
+
+    // 转换为 WorkRecord
+    let result: Vec<WorkRecord> = cleaned
+        .into_iter()
+        .map(|v| {
+            WorkRecord {
+                id: Uuid::new_v4().to_string(),
+                date: v["date"].as_str().unwrap_or("").to_string(),
+                requirement_name: v["requirement_name"].as_str().unwrap_or("").to_string(),
+                hours: v["hours"].as_f64().unwrap_or(0.0),
+                project: v["project"].as_str().unwrap_or("").to_string(),
+                raw_tags: v["raw_tags"].as_array()
+                    .map(|arr| arr.iter().filter_map(|t| t.as_str().map(String::from)).collect())
+                    .unwrap_or_default(),
+                is_manual: false,
+                import_batch: Uuid::new_v4().to_string(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+            }
+        })
+        .collect();
+
+    Ok(result)
 }
 
 fn parse_lake_content(content: &str) -> Result<Vec<WorkRecord>, String> {
@@ -402,6 +536,8 @@ fn main() {
             update_tag_mapping,
             get_settings,
             save_settings,
+            get_export_config,
+            save_export_config,
             import_lake_file,
         ])
         .run(tauri::generate_context!())

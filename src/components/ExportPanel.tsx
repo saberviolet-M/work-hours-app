@@ -1,47 +1,100 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, Fragment } from 'react';
 import { useAppStore } from '../store/useAppStore';
 import { smartAllocate, exportToExcel, Requirement } from '../utils/allocation';
 
+const EXCLUDED_TAGS = ['上线', '联调', '测试', '测试用例', '用例评审', '审批', '需求评审', '技术评审'];
+
 export function ExportPanel() {
-  const { records, loadRecords, settings } = useAppStore();
+  const { records, loadRecords, exportConfig, loadExportConfig, saveExportConfig, settings } = useAppStore();
+  
   const [month, setMonth] = useState(() => {
+    if (exportConfig.month) {
+      return exportConfig.month;
+    }
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
-  const [attendanceDays, setAttendanceDays] = useState(settings.default_attendance_days);
+  const [attendanceDays, setAttendanceDays] = useState(exportConfig.attendance_days || settings.default_attendance_days);
   const [hoursPerDay, setHoursPerDay] = useState(settings.hours_per_day);
   const [aiEnabled, setAiEnabled] = useState(true);
 
   useEffect(() => {
     loadRecords();
-  }, [loadRecords]);
+    loadExportConfig();
+  }, [loadRecords, loadExportConfig]);
+
+  useEffect(() => {
+    saveExportConfig({ month, attendance_days: attendanceDays });
+  }, [month, attendanceDays, saveExportConfig]);
+
+  const filteredRecords = useMemo(() => {
+    return records.filter((r) => r.date.startsWith(month));
+  }, [records, month]);
 
   const requirements = useMemo(() => {
     const map = new Map<string, Requirement>();
 
-    records
-      .filter((r) => r.date.startsWith(month))
-      .forEach((r) => {
-        const key = r.requirement_name;
-        const existing = map.get(key);
-        if (existing) {
-          existing.hours += r.hours;
-        } else {
-          map.set(key, {
-            name: r.requirement_name,
-            hours: r.hours,
-            project: r.project,
-          });
+    filteredRecords.forEach((r) => {
+      let key = r.requirement_name;
+      let project = r.project;
+
+      if (project === '会议') {
+        key = '会议';
+        project = '会议';
+      } else {
+        const tags = r.raw_tags || [];
+        const validTags = tags.filter((tag) => !EXCLUDED_TAGS.includes(tag));
+        
+        if (validTags.length > 0) {
+          key = validTags.join(' / ') + ` (${r.requirement_name})`;
         }
-      });
+      }
+
+      const existing = map.get(key);
+      if (existing) {
+        existing.hours += r.hours;
+      } else {
+        map.set(key, {
+          name: key,
+          hours: r.hours,
+          project: project,
+        });
+      }
+    });
 
     return Array.from(map.values());
-  }, [records, month]);
+  }, [filteredRecords]);
+
+  const groupedRequirements = useMemo(() => {
+    const grouped: Record<string, Requirement[]> = {};
+    
+    requirements.forEach((req) => {
+      const project = req.project || '其他';
+      if (!grouped[project]) {
+        grouped[project] = [];
+      }
+      grouped[project].push(req);
+    });
+
+    return Object.entries(grouped).map(([project, items]) => ({
+      project,
+      items,
+      totalHours: items.reduce((s, r) => s + r.hours, 0),
+    }));
+  }, [requirements]);
 
   const allocationResults = useMemo(() => {
-    if (!aiEnabled) return requirements.map((r) => ({ ...r, manDays: r.hours / hoursPerDay }));
-    return smartAllocate(requirements, attendanceDays, hoursPerDay);
-  }, [requirements, attendanceDays, hoursPerDay, aiEnabled]);
+    const allResults: ReturnType<typeof smartAllocate> = [];
+    
+    groupedRequirements.forEach((group) => {
+      const results = aiEnabled 
+        ? smartAllocate(group.items, attendanceDays, hoursPerDay)
+        : group.items.map((r) => ({ ...r, manDays: r.hours / hoursPerDay }));
+      allResults.push(...results.map((r) => ({ ...r, project: group.project })));
+    });
+
+    return allResults;
+  }, [groupedRequirements, attendanceDays, hoursPerDay, aiEnabled]);
 
   const totals = useMemo(() => {
     return {
@@ -56,6 +109,10 @@ export function ExportPanel() {
     exportToExcel(allocationResults, month, attendanceDays, hoursPerDay);
   };
 
+  const handleMonthChange = (value: string) => {
+    setMonth(value);
+  };
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-gray-800">月度报表导出</h1>
@@ -64,7 +121,7 @@ export function ExportPanel() {
         <input
           type="month"
           value={month}
-          onChange={(e) => setMonth(e.target.value)}
+          onChange={(e) => handleMonthChange(e.target.value)}
           className="px-3 py-2 border rounded"
         />
         <span>出勤天数:</span>
@@ -97,21 +154,39 @@ export function ExportPanel() {
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">所属项目</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">需求</th>
               <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">工时</th>
               <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">人日</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
-            {allocationResults.map((r, i) => (
-              <tr key={i}>
-                <td className="px-4 py-3 text-sm">{r.name}</td>
-                <td className="px-4 py-3 text-sm text-right">{r.hours}h</td>
-                <td className="px-4 py-3 text-sm text-right">{r.manDays.toFixed(1)}</td>
-              </tr>
+            {groupedRequirements.map((group, groupIndex) => (
+              <Fragment key={group.project}>
+                {group.items.map((r, i) => {
+                  const result = allocationResults.find(
+                    (ar) => ar.name === r.name && ar.project === group.project
+                  );
+                  return (
+                    <tr key={`${groupIndex}-${i}`}>
+                      {i === 0 && (
+                        <td className="px-4 py-3 text-sm font-semibold text-gray-700 row-span" rowSpan={group.items.length}>
+                          {group.project}
+                        </td>
+                      )}
+                      <td className="px-4 py-3 text-sm">{r.name}</td>
+                      <td className="px-4 py-3 text-sm text-right">{r.hours}h</td>
+                      <td className="px-4 py-3 text-sm text-right">
+                        {result ? result.manDays.toFixed(1) : (r.hours / hoursPerDay).toFixed(1)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </Fragment>
             ))}
             <tr className="bg-gray-100 font-semibold">
               <td className="px-4 py-3 text-sm">总计</td>
+              <td className="px-4 py-3 text-sm"></td>
               <td className="px-4 py-3 text-sm text-right">{totals.hours}h</td>
               <td className="px-4 py-3 text-sm text-right">{totals.manDays.toFixed(1)}</td>
             </tr>

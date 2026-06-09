@@ -1,9 +1,3 @@
-/**
- * .lake 文件解析器
- * .lake 是单行 HTML，内嵌一个 <card type="block" name="dataTable">，
- * value 属性是 URL-encoded JSON
- */
-
 export interface LakeRecord {
   date: string;
   usage: string;
@@ -19,7 +13,7 @@ export interface ParsedLakeData {
     id: string;
     name: string;
     type: string;
-    options?: string[];
+    options?: { id: string; value: string }[];
   }[];
 }
 
@@ -32,13 +26,11 @@ function urlDecode(str: string): string {
 }
 
 export function parseLakeFile(content: string): ParsedLakeData {
-  // 正则提取 card value 属性
   const cardMatch = content.match(
     /<card[^>]*type="block"[^>]*name="dataTable"[^>]*value="([^"]+)"[^>]*>/
   );
 
   if (!cardMatch) {
-    // 尝试另一种属性顺序
     const altMatch = content.match(
       /<card[^>]*value="([^"]+)"[^>]*type="block"[^>]*name="dataTable"[^>]*>/
     );
@@ -52,69 +44,86 @@ export function parseLakeFile(content: string): ParsedLakeData {
 }
 
 function processCardValue(value: string): ParsedLakeData {
-  // value 是 data: 前缀的 URL-encoded JSON
   const dataStart = value.indexOf('data:');
   let encodedJson = value;
   if (dataStart !== -1) {
     encodedJson = value.substring(dataStart + 5);
   }
 
-  // URL decode
   const decoded = urlDecode(encodedJson);
   const outerData = JSON.parse(decoded);
 
-  // content 可能是 JSON string 或已解析的对象
   const content = typeof outerData.content === 'string' ? JSON.parse(outerData.content) : outerData.content;
 
-  const columns = content.sheet?.[0]?.columns || [];
+  const sheets = content.sheet || content.sheets || [];
   const records = content.records || [];
 
+  if (!Array.isArray(sheets) || sheets.length === 0) {
+    throw new Error('未找到有效的 sheet');
+  }
+
+  const sheet = sheets[0];
+  const columns = sheet.columns || [];
+
   const colMap: Record<string, string> = {};
-  columns.forEach((c: { id: string; name: string }) => {
+  const columnOptions: Record<string, Record<string, string>> = {};
+  
+  columns.forEach((c: { id: string; name: string; options?: { id: string; value: string }[] }) => {
     colMap[c.name] = c.id;
+    if (c.options && Array.isArray(c.options)) {
+      columnOptions[c.id] = {};
+      c.options.forEach((opt) => {
+        if (opt.id && opt.value) {
+          columnOptions[c.id][opt.id] = opt.value;
+        }
+      });
+    }
   });
 
-  const parsedRecords: LakeRecord[] = records.map((record: Record<string, unknown>) => {
+  const parsedColumns = columns.map((c: { id: string; name: string; type: string; options?: { id: string; value: string }[] }) => ({
+    id: c.id,
+    name: c.name,
+    type: c.type || 'unknown',
+    options: c.options,
+  }));
+
+  const parsedRecords: LakeRecord[] = records.map((record: { data: string }) => {
     const data = typeof record.data === 'string' ? JSON.parse(record.data) : record.data;
 
-    const getValueByColumnId = (colId: string): unknown => {
-      const rawValue = data[colId];
+    const getRawValue = (colId: string): unknown => {
+      const rawValue = data?.[colId];
       if (rawValue && typeof rawValue === 'object' && 'value' in rawValue) {
         return (rawValue as { value: unknown }).value;
       }
       return rawValue;
     };
 
-    const findColumnOption = (colId: string, value: unknown): string => {
-      const col = columns.find((c: { id: string; options?: { id: string; value: string }[] }) => c.id === colId);
-      if (col?.options && Array.isArray(col.options)) {
-        if (typeof value === 'number') {
-          const opt = col.options[value];
-          return opt?.value || String(value);
-        } else if (typeof value === 'string') {
-          const opt = col.options.find((o: { id: string; value: string }) => o.id === value);
-          return opt?.value || value;
-        }
+    const decodeOptionValue = (colId: string, value: unknown): string => {
+      if (typeof value !== 'string') {
+        return String(value);
       }
-      return String(value);
+      const options = columnOptions[colId];
+      if (options && options[value]) {
+        return options[value];
+      }
+      return value;
     };
 
-    const getMultiSelectValues = (colId: string, values: unknown): string[] => {
-      const col = columns.find((c: { id: string; options?: { id: string; value: string }[] }) => c.id === colId);
-      if (!col?.options || !Array.isArray(col.options) || !Array.isArray(values)) {
+    const decodeMultiSelectValue = (colId: string, values: unknown): string[] => {
+      if (!Array.isArray(values)) {
         return [];
       }
+      const options = columnOptions[colId];
       return values.map((v) => {
-        if (typeof v === 'string') {
-          const opt = col.options.find((o: { id: string; value: string }) => o.id === v);
-          return opt?.value || v;
+        if (typeof v === 'string' && options && options[v]) {
+          return options[v];
         }
         return String(v);
       });
     };
 
-    const getDateValue = (colId: string): string => {
-      const value = getValueByColumnId(colId);
+    const decodeDateValue = (colId: string): string => {
+      const value = getRawValue(colId);
       if (value && typeof value === 'object' && 'text' in value) {
         return String((value as { text: string }).text);
       }
@@ -122,19 +131,64 @@ function processCardValue(value: string): ParsedLakeData {
     };
 
     return {
-      date: getDateValue(colMap['使用日期'] || ''),
-      usage: findColumnOption(colMap['使用情况'] || '', getValueByColumnId(colMap['使用情况'] || '')),
-      hours: findColumnOption(colMap['使用时间'] || '', getValueByColumnId(colMap['使用时间'] || '')),
-      status: findColumnOption(colMap['使用状态'] || '', getValueByColumnId(colMap['使用状态'] || '')),
-      content_tags: getMultiSelectValues(colMap['工时内容'] || '', getValueByColumnId(colMap['工时内容'] || '')),
-      project: findColumnOption(colMap['所属项目'] || '', getValueByColumnId(colMap['所属项目'] || '')),
+      date: decodeDateValue(colMap['使用日期'] || ''),
+      usage: decodeOptionValue(colMap['使用情况'] || '', getRawValue(colMap['使用情况'] || '')),
+      hours: decodeOptionValue(colMap['使用时间'] || '', getRawValue(colMap['使用时间'] || '')),
+      status: decodeOptionValue(colMap['使用状态'] || '', getRawValue(colMap['使用状态'] || '')),
+      content_tags: decodeMultiSelectValue(colMap['工时内容'] || '', getRawValue(colMap['工时内容'] || '')),
+      project: decodeOptionValue(colMap['所属项目'] || '', getRawValue(colMap['所属项目'] || '')),
     };
   });
 
-  return { records: parsedRecords, columns };
+  return { records: parsedRecords, columns: parsedColumns };
 }
 
 export function hoursToNumber(hoursStr: string): number {
   const match = hoursStr.match(/^(\d+(?:\.\d+)?)/);
   return match ? parseFloat(match[1]) : 0;
+}
+
+/**
+ * 解析 xlsx 文件
+ */
+export async function parseXlsxFile(content: ArrayBuffer): Promise<ParsedLakeData> {
+  const XLSX = await import('xlsx');
+  const workbook = XLSX.read(content, { type: 'array' });
+
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const json = XLSX.utils.sheet_to_json(sheet);
+
+  // 尝试推断列名
+  if (json.length === 0) {
+    return { records: [], columns: [] };
+  }
+
+  const firstRow = json[0] as Record<string, unknown>;
+  const columnNames = Object.keys(firstRow);
+
+  // 找到关键列的位置
+  const dateCol = columnNames.find((c) => c.includes('日期'));
+  const hoursCol = columnNames.find((c) => c.includes('时间') || c.includes('工时'));
+  const projectCol = columnNames.find((c) => c.includes('项目'));
+  const contentCol = columnNames.find((c) => c.includes('内容') || c.includes('需求') || c.includes('工时'));
+
+  const records: LakeRecord[] = json.map((row) => {
+    const r = row as Record<string, unknown>;
+    return {
+      date: String(r[dateCol || ''] || ''),
+      usage: '',
+      hours: String(r[hoursCol || ''] || '1'),
+      status: '',
+      content_tags: contentCol ? [String(r[contentCol] || '')] : [],
+      project: String(r[projectCol || ''] || ''),
+    };
+  });
+
+  const columns = columnNames.map((name) => ({
+    id: name,
+    name: name,
+    type: 'text',
+  }));
+
+  return { records, columns };
 }
