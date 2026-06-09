@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useAppStore, Settings } from '../store/useAppStore';
 
 export function SettingsPanel() {
-  const { settings, loadSettings, saveSettings } = useAppStore();
+  const { settings, loadSettings, saveSettings, clearAllData } = useAppStore();
 
   useEffect(() => {
     loadSettings();
@@ -68,6 +68,23 @@ export function SettingsPanel() {
               />
             </div>
           </div>
+        </div>
+
+        <div>
+          <h2 className="text-lg font-semibold mb-4">数据管理</h2>
+          <button
+            onClick={() => {
+              if (confirm('确定要清除所有数据吗？此操作不可恢复！')) {
+                clearAllData();
+              }
+            }}
+            className="w-full px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
+          >
+            清除所有数据
+          </button>
+          <p className="text-xs text-gray-500 mt-2">
+            此操作将删除所有工时记录、标签映射和导出配置，但保留 API Key 和计算配置
+          </p>
         </div>
       </div>
     </div>

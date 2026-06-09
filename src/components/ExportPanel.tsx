@@ -1,8 +1,37 @@
-import { useState, useEffect, useMemo, Fragment } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAppStore } from '../store/useAppStore';
-import { smartAllocate, exportToExcel, Requirement } from '../utils/allocation';
+import { smartAllocate, exportToExcel, Requirement, EnhancedAllocationResult } from '../utils/allocation';
 
-const EXCLUDED_TAGS = ['上线', '联调', '测试', '测试用例', '用例评审', '审批', '需求评审', '技术评审'];
+const INFRA_KEYWORDS = ['平台服务后台', '游戏运营平台', '会议'];
+const EXCLUDED_TAGS = ['上线', '联调', '测试', '测试用例', '用例评审', '审批', '需求评审', '技术评审', '调整'];
+
+function extractMainRequirementName(requirementName: string, tags: string[]): string {
+  if (requirementName === '会议') {
+    return '会议';
+  }
+  
+  const cleanTags = tags.filter(t => !EXCLUDED_TAGS.includes(t));
+  
+  if (cleanTags.length > 0) {
+    return cleanTags.join(' / ');
+  }
+  
+  return requirementName;
+}
+
+function extractGame(requirementName: string): string {
+  if (INFRA_KEYWORDS.some(kw => requirementName.includes(kw)) || requirementName === '会议') {
+    return '基建公摊';
+  }
+  return '';
+}
+
+function determineLaborType(requirementName: string): string {
+  if (INFRA_KEYWORDS.some(kw => requirementName.includes(kw)) || requirementName === '会议') {
+    return '基建人力';
+  }
+  return '';
+}
 
 export function ExportPanel() {
   const { records, loadRecords, exportConfig, loadExportConfig, saveExportConfig, settings } = useAppStore();
@@ -16,7 +45,6 @@ export function ExportPanel() {
   });
   const [attendanceDays, setAttendanceDays] = useState(exportConfig.attendance_days || settings.default_attendance_days);
   const [hoursPerDay, setHoursPerDay] = useState(settings.hours_per_day);
-  const [aiEnabled, setAiEnabled] = useState(true);
 
   useEffect(() => {
     loadRecords();
@@ -35,30 +63,21 @@ export function ExportPanel() {
     const map = new Map<string, Requirement>();
 
     filteredRecords.forEach((r) => {
-      let key = r.requirement_name;
-      let project = r.project;
+      const tags = r.raw_tags || [];
+      const mainName = extractMainRequirementName(r.requirement_name, tags);
+      const project = r.project === '会议' ? '会议' : (r.project || '其他');
 
-      if (project === '会议') {
-        key = '会议';
-        project = '会议';
-      } else {
-        const tags = r.raw_tags || [];
-        const validTags = tags.filter((tag) => !EXCLUDED_TAGS.includes(tag));
-        
-        if (validTags.length > 0) {
-          key = validTags.join(' / ') + ` (${r.requirement_name})`;
+      if (mainName.trim()) {
+        const existing = map.get(mainName);
+        if (existing) {
+          existing.hours += r.hours;
+        } else {
+          map.set(mainName, {
+            name: mainName,
+            hours: r.hours,
+            project: project,
+          });
         }
-      }
-
-      const existing = map.get(key);
-      if (existing) {
-        existing.hours += r.hours;
-      } else {
-        map.set(key, {
-          name: key,
-          hours: r.hours,
-          project: project,
-        });
       }
     });
 
@@ -84,17 +103,25 @@ export function ExportPanel() {
   }, [requirements]);
 
   const allocationResults = useMemo(() => {
-    const allResults: ReturnType<typeof smartAllocate> = [];
+    const allResults: EnhancedAllocationResult[] = [];
     
     groupedRequirements.forEach((group) => {
-      const results = aiEnabled 
-        ? smartAllocate(group.items, attendanceDays, hoursPerDay)
-        : group.items.map((r) => ({ ...r, manDays: r.hours / hoursPerDay }));
-      allResults.push(...results.map((r) => ({ ...r, project: group.project })));
+      const baseResults = smartAllocate(group.items, attendanceDays, hoursPerDay);
+      
+      const enhancedResults = baseResults.map((r) => ({
+        ...r,
+        project: group.project,
+        game: extractGame(r.name),
+        laborType: determineLaborType(r.name),
+        department: '',
+        direction: '',
+      }));
+      
+      allResults.push(...enhancedResults);
     });
 
     return allResults;
-  }, [groupedRequirements, attendanceDays, hoursPerDay, aiEnabled]);
+  }, [groupedRequirements, attendanceDays, hoursPerDay]);
 
   const totals = useMemo(() => {
     return {
@@ -139,56 +166,38 @@ export function ExportPanel() {
           className="w-20 px-3 py-2 border rounded"
         />
         <span>h/人日</span>
-        <label className="flex items-center space-x-2 ml-4">
-          <input
-            type="checkbox"
-            checked={aiEnabled}
-            onChange={(e) => setAiEnabled(e.target.checked)}
-            className="w-4 h-4 text-blue-600 rounded"
-          />
-          <span>AI 智能分配</span>
-        </label>
       </div>
 
       <div className="bg-white rounded-lg shadow overflow-hidden">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">所属项目</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">需求</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">工时</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">人日</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">需求名称</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">对应游戏</th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">工时（人日）</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">部门</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">所属方向</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">人力类型</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
-            {groupedRequirements.map((group, groupIndex) => (
-              <Fragment key={group.project}>
-                {group.items.map((r, i) => {
-                  const result = allocationResults.find(
-                    (ar) => ar.name === r.name && ar.project === group.project
-                  );
-                  return (
-                    <tr key={`${groupIndex}-${i}`}>
-                      {i === 0 && (
-                        <td className="px-4 py-3 text-sm font-semibold text-gray-700 row-span" rowSpan={group.items.length}>
-                          {group.project}
-                        </td>
-                      )}
-                      <td className="px-4 py-3 text-sm">{r.name}</td>
-                      <td className="px-4 py-3 text-sm text-right">{r.hours}h</td>
-                      <td className="px-4 py-3 text-sm text-right">
-                        {result ? result.manDays.toFixed(1) : (r.hours / hoursPerDay).toFixed(1)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </Fragment>
+            {allocationResults.map((r, i) => (
+              <tr key={i}>
+                <td className="px-4 py-3 text-sm">{r.name}</td>
+                <td className="px-4 py-3 text-sm">{r.game || '-'}</td>
+                <td className="px-4 py-3 text-sm text-right">{r.manDays.toFixed(1)}</td>
+                <td className="px-4 py-3 text-sm">{r.department || '-'}</td>
+                <td className="px-4 py-3 text-sm">{r.direction || '-'}</td>
+                <td className="px-4 py-3 text-sm">{r.laborType || '-'}</td>
+              </tr>
             ))}
             <tr className="bg-gray-100 font-semibold">
               <td className="px-4 py-3 text-sm">总计</td>
               <td className="px-4 py-3 text-sm"></td>
-              <td className="px-4 py-3 text-sm text-right">{totals.hours}h</td>
               <td className="px-4 py-3 text-sm text-right">{totals.manDays.toFixed(1)}</td>
+              <td className="px-4 py-3 text-sm"></td>
+              <td className="px-4 py-3 text-sm"></td>
+              <td className="px-4 py-3 text-sm"></td>
             </tr>
           </tbody>
         </table>

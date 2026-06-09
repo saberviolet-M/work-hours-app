@@ -194,6 +194,15 @@ fn delete_record(state: State<AppState>, id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn clear_all_data(state: State<AppState>) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM work_records", []).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM tag_mappings", []).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM export_config", []).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 fn get_tag_mappings(state: State<AppState>) -> Result<Vec<TagMapping>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
 
@@ -532,6 +541,7 @@ fn main() {
             add_records,
             update_record,
             delete_record,
+            clear_all_data,
             get_tag_mappings,
             update_tag_mapping,
             get_settings,

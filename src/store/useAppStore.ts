@@ -44,6 +44,7 @@ interface AppState {
   addRecords: (records: Omit<WorkRecord, 'id' | 'created_at'>[]) => Promise<void>;
   updateRecord: (id: string, updates: Partial<WorkRecord>) => Promise<void>;
   deleteRecord: (id: string) => Promise<void>;
+  clearAllData: () => Promise<void>;
 
   loadTagMappings: () => Promise<void>;
   updateTagMapping: (tag: string, mapping: Partial<TagMapping>) => Promise<void>;
@@ -111,6 +112,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       await get().loadRecords();
     } catch (e) {
       set({ error: String(e), isLoading: false });
+    }
+  },
+
+  clearAllData: async () => {
+    set({ isLoading: true, error: null });
+    try {
+      await invoke('clear_all_data');
+      set({ records: [], tagMappings: [], exportConfig: { id: '', month: '', attendance_days: 22, allocation_result: '' } });
+    } catch (e) {
+      set({ error: String(e), isLoading: false });
+    } finally {
+      set({ isLoading: false });
     }
   },
 
