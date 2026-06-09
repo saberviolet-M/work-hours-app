@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAppStore } from '../store/useAppStore';
+import { ConfirmDialog } from './ConfirmDialog';
 
 export function WorkRecordList() {
   const { records, loadRecords, deleteRecord, isLoading } = useAppStore();
@@ -10,6 +11,7 @@ export function WorkRecordList() {
   const [search, setSearch] = useState('');
   const [projectFilter, setProjectFilter] = useState('all');
   const [tagFilter, setTagFilter] = useState('all');
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
   useEffect(() => {
     loadRecords();
@@ -41,10 +43,14 @@ export function WorkRecordList() {
     return { count: filteredRecords.length, hours: totalHours, manDays: totalManDays };
   }, [filteredRecords]);
 
-  const handleDelete = async (id: string) => {
-    if (confirm('确定删除这条记录？')) {
-      await deleteRecord(id);
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget) return;
+    try {
+      await deleteRecord(deleteTarget.id);
+    } catch (e) {
+      console.error('删除失败:', e);
     }
+    setDeleteTarget(null);
   };
 
   return (
@@ -118,7 +124,12 @@ export function WorkRecordList() {
                   <td className="px-4 py-3 text-sm">{record.project}</td>
                   <td className="px-4 py-3 text-sm">
                     <button
-                      onClick={() => handleDelete(record.id)}
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setDeleteTarget({ id: record.id, name: record.requirement_name });
+                      }}
                       className="text-red-600 hover:text-red-800"
                     >
                       删除
@@ -134,6 +145,20 @@ export function WorkRecordList() {
       <div className="text-gray-600">
         共 {stats.count} 条 | 本月 {stats.hours}h / {stats.manDays.toFixed(1)} 人日
       </div>
+
+      <ConfirmDialog
+        isOpen={deleteTarget !== null}
+        title="确认删除"
+        message={
+          deleteTarget
+            ? `确定删除"${deleteTarget.name}"这条记录吗？此操作不可恢复。`
+            : ''
+        }
+        confirmLabel="确认删除"
+        confirmVariant="danger"
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 }

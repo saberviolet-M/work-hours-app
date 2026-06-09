@@ -64,7 +64,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   settings: {
     api_key: '',
     default_attendance_days: 22,
-    hours_per_day: 7.5,
+    hours_per_day: 8,
   },
   exportConfig: {
     id: '',
@@ -111,7 +111,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       await invoke('delete_record', { id });
       await get().loadRecords();
     } catch (e) {
+      console.error('删除记录失败:', e);
       set({ error: String(e), isLoading: false });
+    } finally {
+      set({ isLoading: false });
     }
   },
 

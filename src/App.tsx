@@ -1,13 +1,19 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ImportPanel } from './components/ImportPanel';
 import { WorkRecordList } from './components/WorkRecordList';
 import { ExportPanel } from './components/ExportPanel';
 import { SettingsPanel } from './components/SettingsPanel';
+import { isTauri } from '@tauri-apps/api/core';
 
 type Tab = 'import' | 'browse' | 'export' | 'settings';
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('import');
+  const [isTauriEnv, setIsTauriEnv] = useState(false);
+
+  useEffect(() => {
+    setIsTauriEnv(isTauri());
+  }, []);
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -59,6 +65,15 @@ function App() {
       </nav>
 
       <main className="max-w-6xl mx-auto px-4 py-8">
+        {!isTauriEnv && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+            <h3 className="text-yellow-800 font-semibold mb-2">⚠️ 警告</h3>
+            <p className="text-yellow-700 text-sm">
+              此应用需要在 Tauri 桌面应用中运行才能正常工作。网页端无法使用数据库功能（数据浏览、删除、月度导出等）。
+              请使用 `npm run tauri dev` 启动桌面应用。
+            </p>
+          </div>
+        )}
         {activeTab === 'import' && <ImportPanel />}
         {activeTab === 'browse' && <WorkRecordList />}
         {activeTab === 'export' && <ExportPanel />}

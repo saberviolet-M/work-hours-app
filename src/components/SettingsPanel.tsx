@@ -1,8 +1,10 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useAppStore, Settings } from '../store/useAppStore';
+import { ConfirmDialog } from './ConfirmDialog';
 
 export function SettingsPanel() {
   const { settings, loadSettings, saveSettings, clearAllData } = useAppStore();
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -73,11 +75,8 @@ export function SettingsPanel() {
         <div>
           <h2 className="text-lg font-semibold mb-4">数据管理</h2>
           <button
-            onClick={() => {
-              if (confirm('确定要清除所有数据吗？此操作不可恢复！')) {
-                clearAllData();
-              }
-            }}
+            type="button"
+            onClick={() => setShowClearConfirm(true)}
             className="w-full px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
           >
             清除所有数据
@@ -87,6 +86,23 @@ export function SettingsPanel() {
           </p>
         </div>
       </div>
+
+      <ConfirmDialog
+        isOpen={showClearConfirm}
+        title="清除所有数据"
+        message="确定要清除所有数据吗？此操作将删除所有工时记录、标签映射和导出配置，且不可恢复。"
+        confirmLabel="确认清除"
+        confirmVariant="danger"
+        onConfirm={async () => {
+          try {
+            await clearAllData();
+          } catch (e) {
+            console.error('清除所有数据失败:', e);
+          }
+          setShowClearConfirm(false);
+        }}
+        onCancel={() => setShowClearConfirm(false)}
+      />
     </div>
   );
 }
