@@ -42,7 +42,7 @@ export function SettingsPanel() {
 
         <div>
           <h2 className="text-lg font-semibold mb-4">工时计算配置</h2>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 默认出勤天数
@@ -54,19 +54,6 @@ export function SettingsPanel() {
                 className="w-full px-3 py-2 border rounded"
                 min="1"
                 max="31"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                人日换算（小时/人日）
-              </label>
-              <input
-                type="number"
-                value={settings.hours_per_day}
-                onChange={(e) => handleSave('hours_per_day', Number(e.target.value))}
-                className="w-full px-3 py-2 border rounded"
-                min="1"
-                step="0.5"
               />
             </div>
           </div>

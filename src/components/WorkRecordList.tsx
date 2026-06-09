@@ -39,7 +39,7 @@ export function WorkRecordList() {
 
   const stats = useMemo(() => {
     const totalHours = filteredRecords.reduce((s, r) => s + r.hours, 0);
-    const totalManDays = totalHours / 7.5;
+    const totalManDays = totalHours / 8;
     return { count: filteredRecords.length, hours: totalHours, manDays: totalManDays };
   }, [filteredRecords]);
 
