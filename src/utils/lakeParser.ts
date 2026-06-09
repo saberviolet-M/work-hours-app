@@ -99,6 +99,20 @@ function processCardValue(value: string): ParsedLakeData {
       return String(value);
     };
 
+    const getMultiSelectValues = (colId: string, values: unknown): string[] => {
+      const col = columns.find((c: { id: string; options?: { id: string; value: string }[] }) => c.id === colId);
+      if (!col?.options || !Array.isArray(col.options) || !Array.isArray(values)) {
+        return [];
+      }
+      return values.map((v) => {
+        if (typeof v === 'string') {
+          const opt = col.options.find((o: { id: string; value: string }) => o.id === v);
+          return opt?.value || v;
+        }
+        return String(v);
+      });
+    };
+
     const getDateValue = (colId: string): string => {
       const value = getValueByColumnId(colId);
       if (value && typeof value === 'object' && 'text' in value) {
@@ -112,7 +126,7 @@ function processCardValue(value: string): ParsedLakeData {
       usage: findColumnOption(colMap['使用情况'] || '', getValueByColumnId(colMap['使用情况'] || '')),
       hours: findColumnOption(colMap['使用时间'] || '', getValueByColumnId(colMap['使用时间'] || '')),
       status: findColumnOption(colMap['使用状态'] || '', getValueByColumnId(colMap['使用状态'] || '')),
-      content_tags: (getValueByColumnId(colMap['工时内容'] || '') as string[]) || [],
+      content_tags: getMultiSelectValues(colMap['工时内容'] || '', getValueByColumnId(colMap['工时内容'] || '')),
       project: findColumnOption(colMap['所属项目'] || '', getValueByColumnId(colMap['所属项目'] || '')),
     };
   });

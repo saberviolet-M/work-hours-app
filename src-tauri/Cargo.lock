@@ -5096,6 +5096,7 @@ name = "work-hours-app"
 version = "1.0.0"
 dependencies = [
  "chrono",
+ "dirs",
  "regex",
  "reqwest 0.12.28",
  "rusqlite",

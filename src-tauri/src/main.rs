@@ -90,7 +90,6 @@ fn init_db(conn: &Connection) -> SqliteResult<()> {
         [],
     )?;
 
-    // Insert default settings if not exists
     conn.execute(
         "INSERT OR IGNORE INTO settings (key, value) VALUES ('api_key', '')",
         [],
@@ -275,45 +274,31 @@ fn save_settings(state: State<AppState>, settings: Settings) -> Result<(), Strin
 
 #[tauri::command]
 async fn import_lake_file(content: String, use_ai: bool, api_key: String) -> Result<Vec<WorkRecord>, String> {
-    // Parse lake file content
     let records = parse_lake_content(&content)?;
 
     if !use_ai || api_key.is_empty() {
-        // Return raw records without AI processing
         return Ok(records);
     }
 
-    // TODO: Call Claude API for AI processing
-    // For now, return parsed records as-is
     Ok(records)
 }
 
 fn parse_lake_content(content: &str) -> Result<Vec<WorkRecord>, String> {
     use regex::Regex;
 
-    // Extract card value
     let re = Regex::new(r#"value="([^"]+)""#).map_err(|e| e.to_string())?;
     let caps = re.captures(content).ok_or("Cannot find card value")?;
     let encoded = caps.get(1).ok_or("Cannot extract value")?.as_str();
 
-    // URL decode
     let decoded = url_decode(encoded);
-
-    // Parse outer JSON
     let outer: serde_json::Value = serde_json::from_str(&decoded).map_err(|e| e.to_string())?;
 
-    // Parse content (it's a JSON string)
     let content_str = outer["content"].as_str().ok_or("No content field")?;
     let inner: serde_json::Value = serde_json::from_str(content_str).map_err(|e| e.to_string())?;
 
-    let columns = inner["sheet"][0]["columns"]
-        .as_array()
-        .ok_or("No columns")?;
-    let records = inner["records"]
-        .as_array()
-        .ok_or("No records")?;
+    let columns = inner["sheet"][0]["columns"].as_array().ok_or("No columns")?;
+    let records = inner["records"].as_array().ok_or("No records")?;
 
-    // Build column index
     let mut col_map: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for (i, col) in columns.iter().enumerate() {
         if let Some(name) = col["name"].as_str() {
@@ -321,14 +306,8 @@ fn parse_lake_content(content: &str) -> Result<Vec<WorkRecord>, String> {
         }
     }
 
-    let get_col_idx = |name: &str| -> Option<usize> {
+    let _get_col_idx = |name: &str| -> Option<usize> {
         col_map.get(name).copied()
-    };
-
-    let get_value = |col_name: &str, data: &serde_json::Value| -> Option<String> {
-        let idx = get_col_idx(col_name)?;
-        let val = data.get(idx)?;
-        Some(val.to_string())
     };
 
     let mut result = Vec::new();
@@ -361,6 +340,16 @@ fn parse_lake_content(content: &str) -> Result<Vec<WorkRecord>, String> {
     Ok(result)
 }
 
+fn get_value(col_name: &str, data: &serde_json::Value) -> Option<String> {
+    let mut col_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    if let Some(obj) = data.as_object() {
+        for (k, v) in obj {
+            col_map.insert(k.clone(), v.to_string());
+        }
+    }
+    col_map.get(col_name).cloned()
+}
+
 fn url_decode(s: &str) -> String {
     let mut result = String::new();
     let mut chars = s.chars().peekable();
@@ -390,7 +379,7 @@ fn url_decode(s: &str) -> String {
 }
 
 fn main() {
-    let app_dir = tauri::api::path::app_data_dir(&tauri::Config::default()).unwrap_or_else(|| {
+    let app_dir = dirs::data_dir().unwrap_or_else(|| {
         std::path::PathBuf::from(".")
     });
     std::fs::create_dir_all(&app_dir).ok();

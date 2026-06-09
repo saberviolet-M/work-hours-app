@@ -1,3 +1,1 @@
-pub use crate::main;
-
-mod main;
+// Empty lib.rs - this is a binary crate, not a library
