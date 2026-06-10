@@ -30,7 +30,7 @@ export function smartAllocate(
   // 步骤1: 每个需求保底分配（向下取整到 0.5）
   const results: AllocationResult[] = requirements.map(r => {
     const rawManDays = r.hours / hoursPerDay;
-    const floorManDays = Math.floor(rawManDays * 2) / 2;
+    const floorManDays = Math.max(0.5, Math.floor(rawManDays * 2) / 2);
     return {
       name: r.name,
       actualHours: r.hours,
@@ -46,32 +46,50 @@ export function smartAllocate(
   const totalAllocated = results.reduce((sum, r) => sum + r.manDays, 0);
   let remainingSlots = Math.round((attendanceDays - totalAllocated) * 2);
 
-  // 步骤2: 按"离下一档距离"排序，优先补给最接近下一档的需求
-  // 离下一档越远 → 越优先得到半个单位（弥补缺口）
-  const indexed = results.map((r, i) => {
-    const raw = r.actualHours / hoursPerDay;
-    const gapToNext = raw - r.manDays; // 0 ~ 0.5
-    return { ...r, index: i, gapToNext };
-  });
-
-  // 排序：gapToNext 越大越优先获得增量
-  const byGapDesc = [...indexed].sort((a, b) => b.gapToNext - a.gapToNext);
-  // 排序：gapToNext 越小越优先被减少（即当前值离下方最近）
-  const byGapAsc = [...indexed].sort((a, b) => a.gapToNext - b.gapToNext);
-
+  // 步骤2: 分配剩余槽位（每次迭代动态选最优候选，带上限约束）
   while (remainingSlots > 0) {
-    // 找到离下一档最近的需求增加 0.5
-    const target = byGapDesc.find(r => results[r.index].manDays < attendanceDays);
-    if (!target) break;
-    results[target.index].manDays += 0.5;
+    let bestIdx = -1;
+    let bestGap = -1;
+
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      const raw = r.actualHours / hoursPerDay;
+      const cap = Math.floor(raw) + 1.0; // 上限：原始人日整数部分 + 1.0
+      if (r.manDays >= cap) continue;
+
+      const gap = raw - r.manDays; // 离原始值还差多少
+      if (gap > bestGap) {
+        bestGap = gap;
+        bestIdx = i;
+      }
+    }
+
+    if (bestIdx === -1) break; // 全部到上限
+    results[bestIdx].manDays += 0.5;
     remainingSlots--;
   }
 
+  // 步骤3: 超出出勤天数时削减
   while (remainingSlots < 0) {
-    // 找到人日 > 0.5 且离下一档最远（即当前值虚高）的需求减少 0.5
-    const target = byGapAsc.find(r => results[r.index].manDays > 0.5);
-    if (!target) break;
-    results[target.index].manDays -= 0.5;
+    let bestIdx = -1;
+    let bestScore = -Infinity;
+
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      if (r.manDays <= 0.5) continue; // 保护最小粒度
+      const raw = r.actualHours / hoursPerDay;
+
+      // 优先削减"相对虚高"的需求：绝对值越大，削减影响越小
+      // score = manDays - raw，越大越优先被削
+      const score = r.manDays - raw;
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = i;
+      }
+    }
+
+    if (bestIdx === -1) break;
+    results[bestIdx].manDays -= 0.5;
     remainingSlots++;
   }
 
