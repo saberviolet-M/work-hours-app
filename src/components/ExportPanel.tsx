@@ -1,6 +1,22 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAppStore } from '../store/useAppStore';
 import { smartAllocate, aiAllocate, exportToExcel, Requirement, AllocationResult } from '../utils/allocation';
+import { ConfirmDialog } from './ConfirmDialog';
+import { DateRangePicker } from './DateRangePicker';
+
+type DateRangeType = 'month' | 'lastMonth' | 'last3Months' | 'all';
+
+interface DateRangeOption {
+  type: DateRangeType;
+  label: string;
+}
+
+const DATE_RANGE_OPTIONS: DateRangeOption[] = [
+  { type: 'month', label: '本月' },
+  { type: 'lastMonth', label: '上月' },
+  { type: 'last3Months', label: '近3月' },
+  { type: 'all', label: '全部' },
+];
 
 const EXCLUDED_TAGS = ['上线', '联调', '测试', '测试用例', '用例评审', '审批', '需求评审', '技术评审', '调整'];
 
@@ -50,10 +66,13 @@ export function ExportPanel() {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
+  const [dateRangeType, setDateRangeType] = useState<DateRangeType>('month');
   const [attendanceDays, setAttendanceDays] = useState(exportConfig.attendance_days || settings.default_attendance_days);
   const [useAI, setUseAI] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [copiedCell, setCopiedCell] = useState<string | null>(null);
+  const [showExportConfirm, setShowExportConfirm] = useState(false);
+  
   const hoursPerDay = 8;
 
   const copyToClipboard = (text: string, cellKey: string) => {
@@ -73,8 +92,35 @@ export function ExportPanel() {
   }, [month, attendanceDays, saveExportConfig]);
 
   const filteredRecords = useMemo(() => {
-    return records.filter((r) => r.date.startsWith(month));
-  }, [records, month]);
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth();
+
+    switch (dateRangeType) {
+      case 'month': {
+        return records.filter((r) => r.date.startsWith(month));
+      }
+      case 'lastMonth': {
+        const lastMonthDate = new Date(currentYear, currentMonth - 1, 1);
+        const lastMonthStr = `${lastMonthDate.getFullYear()}-${String(lastMonthDate.getMonth() + 1).padStart(2, '0')}`;
+        return records.filter((r) => r.date.startsWith(lastMonthStr));
+      }
+      case 'last3Months': {
+        const monthStrings: string[] = [];
+        for (let i = 0; i < 3; i++) {
+          const d = new Date(currentYear, currentMonth - i, 1);
+          monthStrings.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+        }
+        return records.filter((r) => monthStrings.some((m) => r.date.startsWith(m)));
+      }
+      case 'all': {
+        return records;
+      }
+      default: {
+        return records.filter((r) => r.date.startsWith(month));
+      }
+    }
+  }, [records, month, dateRangeType]);
 
   const requirements = useMemo(() => {
     const map = new Map<string, Requirement>();
@@ -181,11 +227,11 @@ export function ExportPanel() {
       <h1 className="text-2xl font-bold text-gray-800">月度报表导出</h1>
 
       <div className="flex space-x-4 items-center flex-wrap gap-2">
-        <input
-          type="month"
+        <DateRangePicker
           value={month}
-          onChange={(e) => handleMonthChange(e.target.value)}
-          className="px-3 py-2 border rounded"
+          dateRangeType={dateRangeType}
+          onChange={handleMonthChange}
+          onRangeTypeChange={setDateRangeType}
         />
         <span>出勤天数:</span>
         <input
@@ -260,26 +306,25 @@ export function ExportPanel() {
 
       <div className="flex space-x-4">
         <button
-          onClick={handleExportExcel}
+          onClick={() => setShowExportConfirm(true)}
           className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
         >
           导出企微 Excel
         </button>
-        <button
-          onClick={() => {
-            const json = JSON.stringify(allocationResults, null, 2);
-            const blob = new Blob([json], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `${month}_工时统计.json`;
-            a.click();
-          }}
-          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-        >
-          导出 JSON
-        </button>
       </div>
+
+      <ConfirmDialog
+        isOpen={showExportConfirm}
+        title="确认导出"
+        message={`确定导出 ${DATE_RANGE_OPTIONS.find((o) => o.type === dateRangeType)?.label || month} 的工时报表吗？`}
+        confirmLabel="确认导出"
+        confirmVariant="default"
+        onConfirm={() => {
+          handleExportExcel();
+          setShowExportConfirm(false);
+        }}
+        onCancel={() => setShowExportConfirm(false)}
+      />
     </div>
   );
 }
