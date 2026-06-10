@@ -93,7 +93,7 @@ export async function aiAllocate(
     rawManDays: r.hours / hoursPerDay,
   }));
 
-  const prompt = `你是一个工时分配助手。给定以下需求和出勤天数，请将每个需求分配到0.5人日粒度，要求总和等于出勤天数。
+  const prompt = `你是一个工时分配助手。给定以下需求和出勤天数，请将每个需求分配到0.5人日粒度，使总和精确等于出勤天数。
 
 出勤天数: ${attendanceDays}
 换算: ${hoursPerDay}h = 1 人日
@@ -101,12 +101,14 @@ export async function aiAllocate(
 需求列表:
 ${reqList.map((r, i) => `${i + 1}. ${r.name}: ${r.hours}h (原始 ${r.rawManDays.toFixed(2)} 人日)`).join('\n')}
 
-规则:
-- 每个需求的分配值必须是0.5的倍数（如 0.5, 1.0, 1.5, 2.0...）
+分配规则（模拟真实填报逻辑）:
+- 每个需求的分配值必须是0.5的倍数（如 0.5, 1.0, 1.5, 2.0, 2.5...）
 - 分配总和的绝对值必须精确等于 ${attendanceDays}
-- 小需求（< 0.5 人日原始值）可以合并向下取整
-- 大需求可以微调吸收误差，但偏差尽量不超过1人日
-- 优先保证大需求的合理性
+- 大量工时的需求（原始 > 4 人日）应适当压缩，因为实际工时包含联调/测试等分摊时间，填报人日通常低于实际耗时
+- 中等工时（原始 1.5-4 人日）保持在 1.5-2.5 人日区间
+- 小需求（原始 < 1.5 人日）至少保证 0.5，会议类适当上浮
+- 优先以 0.5 为步长微调，避免大幅偏离原始比例
+- 确保每个需求至少 0.5 人日
 
 请只返回JSON数组，格式: [{"name": "需求名", "manDays": 1.5}, ...]`;
 
@@ -159,24 +161,16 @@ export function exportToExcel(
       [`出勤天数: ${attendanceDays}`],
       [`换算: ${hoursPerDay}h/人日`],
       [],
-      ['需求名称', '实际工时(h)', '对应游戏', '工时（人日）', '部门', '所属方向', '人力类型'],
+      ['需求名称', '实际工时(h)', '工时（人日）'],
       ...results.map((r) => [
         r.name,
         r.actualHours,
-        r.game || '',
         r.manDays,
-        r.department || '',
-        r.direction || '',
-        r.laborType || '',
       ]),
       [
         '总计',
         results.reduce((s, r) => s + r.actualHours, 0),
-        '',
         results.reduce((s, r) => s + r.manDays, 0),
-        '',
-        '',
-        '',
       ],
     ];
 
